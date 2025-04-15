@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
+import urllib.parse
 
 st.title("🔎 Executive Discovery App")
 st.markdown("Upload a list of companies and find executive/board members with titles and LinkedIn URLs.")
@@ -10,25 +11,33 @@ uploaded_file = st.file_uploader("📤 Upload your company list (CSV with 'Compa
 api_key = st.secrets["phantombuster"]["api_key"]
 phantom_id = st.secrets["phantombuster"]["phantom_id"]
 
-def generate_queries(df):
+def generate_search_urls(df):
     titles = ["CEO", "Founder", "President", "Board Member"]
-    df["LinkedIn Search Query"] = df["Company Name"].apply(
-        lambda c: f'site:linkedin.com/in "{c}" ({" OR ".join(f"\"{t}\"" for t in titles)})'
-    )
+    def make_url(company):
+        query = f'{company} ' + ' OR '.join(titles)
+        encoded = urllib.parse.quote(query)
+        return f'https://www.linkedin.com/search/results/people/?keywords={encoded}'
+    df["LinkedIn Search URL"] = df["Company Name"].apply(make_url)
     return df
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    df = generate_queries(df)
-    st.dataframe(df[["Company Name", "LinkedIn Search Query"]])
+    df = generate_search_urls(df)
+    st.dataframe(df[["Company Name", "LinkedIn Search URL"]])
 
     if st.button("🚀 Launch PhantomBuster Search Export"):
         headers = {
             "X-Phantombuster-Key-1": api_key,
             "Content-Type": "application/json",
         }
+        search_urls = df["LinkedIn Search URL"].tolist()
         launch_url = "https://api.phantombuster.com/api/v2/agents/launch"
-        launch_body = {"id": phantom_id}
+        launch_body = {
+            "id": phantom_id,
+            "argument": {
+                "searchUrls": search_urls
+            }
+        }
         r = requests.post(launch_url, headers=headers, json=launch_body)
 
         if r.status_code == 200:
@@ -43,7 +52,7 @@ if uploaded_file:
                     data = res.json()["container"]
                     profiles = pd.DataFrame(data)
                     st.success("🎯 Results received!")
-                    st.dataframe(profiles[["name", "jobTitle", "linkedinUrl"]])
+                    st.dataframe(profiles)
                     st.download_button("📥 Download Results as CSV", profiles.to_csv(index=False), "executives.csv")
                     break
                 container.info("⏳ Waiting for PhantomBuster to return data...")
